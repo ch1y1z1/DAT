@@ -775,11 +775,15 @@ class DAT(nn.Module):
 
         self.layers = nn.ModuleList()
         for i in range(self.num_layers):
+            if i < 2:          # 头两个 RG 用小窗口
+                _split = [8,8]
+            else:              # 深层维持论文窗口 8×16
+                _split = [8,16]
             layer = ResidualGroup(
                 dim=embed_dim,
                 num_heads=heads[i],
                 reso=img_size,
-                split_size=split_size,
+                split_size=_split,
                 expansion_factor=expansion_factor,
                 qkv_bias=qkv_bias,
                 qk_scale=qk_scale,
