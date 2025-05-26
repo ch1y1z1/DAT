@@ -1,7 +1,7 @@
 addict
 future
 lmdb
-numpy>=1.17
+numpy>=1.17,<=1.25
 opencv-python
 Pillow
 pyyaml
@@ -9,7 +9,7 @@ requests
 scikit-image
 scipy
 tb-nightly
-torch==1.8.0
+torch
 torchvision
 tqdm
 yapf
