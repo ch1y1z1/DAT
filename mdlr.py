@@ -20,14 +20,6 @@ def train():
     from basicsr import train
     from os import path as osp
     import sys
-    import shutil
-
-    import time
-
-    start_time = time.time()
-    shutil.copytree("/datasets/DIV2K", "/tmp/DIV2K", dirs_exist_ok=True)
-    shutil.copytree("/datasets/Urban100", "/tmp/Urban100", dirs_exist_ok=True)
-    print(f"复制数据集耗时: {time.time() - start_time:.2f}秒")
 
     sys.argv = ["", "-opt", "/root/train_DAT_light_x4.yml"]
 

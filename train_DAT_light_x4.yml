@@ -11,8 +11,8 @@ datasets:
     task: SR
     name: DIV2K
     type: PairedImageDataset
-    dataroot_gt: /tmp/DIV2K/HR
-    dataroot_lq: /tmp/DIV2K/LR
+    dataroot_gt: /datasets/DIV2K/HR
+    dataroot_lq: /datasets/DIV2K/LR
     filename_tmpl: '{}x4'
     io_backend:
       type: disk
@@ -32,8 +32,8 @@ datasets:
     task: SR
     name: Urban100
     type: PairedImageDataset
-    dataroot_gt: /tmp/Urban100/HR
-    dataroot_lq: /tmp/Urban100/LR
+    dataroot_gt: /datasets/Urban100/HR
+    dataroot_lq: /datasets/Urban100/LR
     filename_tmpl: '{}x4'
     io_backend:
       type: disk
