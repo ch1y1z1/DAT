@@ -47,9 +47,9 @@ network_g:
   img_size: 64
   img_range: 1.
   depth: [18]
-  embed_dim: 60
-  num_heads: [6]
-  expansion_factor: 2
+  embed_dim: 48
+  num_heads: [4]
+  expansion_factor: 1.5
   resi_connection: '3conv'
   split_size: [8,32]
   upsampler: 'pixelshuffledirect'
