@@ -53,6 +53,7 @@ network_g:
   resi_connection: '3conv'
   split_size: [8,16]
   upsampler: 'pixelshuffledirect'
+  rank_ratio: 0.3
 
 # path
 path:

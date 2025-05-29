@@ -47,16 +47,18 @@ network_g:
   img_size: 64
   img_range: 1.
   depth: [18]
-  embed_dim: 36
-  num_heads: [3]
+  embed_dim: 48
+  num_heads: [4]
   expansion_factor: 1.5
   resi_connection: '3conv'
-  split_size: [8,16]
+  split_size: [8,32]
   upsampler: 'pixelshuffledirect'
+  rank_ratio: 1.0
 
 # path
 path:
-  pretrain_network_g: ~/Downloads/net_g_latest.pth
+  pretrain_network_g: ./net_g.pth
+  # pretrain_network_g: ~/Downloads/net_g_latest.pth
   # pretrain_network_g: experiments/train_DAT_light_x4/models/net_g_latest.pth
   strict_load_g: False
   resume_state: ~
