@@ -53,6 +53,7 @@ network_g:
   resi_connection: '3conv'
   split_size: [8,16]
   upsampler: 'pixelshuffledirect'
+  rank_ratio: 0.3
   # rank_ratio: 0.25
   # high_rank_ratio: 0.3
   # high_rank_depth_threshold: 2

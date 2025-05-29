@@ -14,22 +14,62 @@ import numpy as np
 from basicsr.utils.registry import ARCH_REGISTRY
 
 
+class LowRankLinear(nn.Module):
+    """ Low-Rank Linear Layer.
+    Args:
+        in_features (int): Number of input features.
+        out_features (int): Number of output features.
+        rank (int): Rank of the decomposition.
+        bias (bool): If True, adds a learnable bias to the output. Default: True
+    """
+    def __init__(self, in_features: int, out_features: int, rank: int, bias: bool = True):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.rank = rank
+        
+        self.U = nn.Linear(in_features, rank, bias=False)
+        self.V = nn.Linear(rank, out_features, bias=bias)
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.V(self.U(x))
+
+    def __repr__(self):
+        return f"LowRankLinear(in_features={self.in_features}, out_features={self.out_features}, rank={self.rank}, bias={self.V.bias is not None})"
+
+
 class SharedQKV(nn.Module):
     """Shared QKV weights for parameter reduction in ResidualGroup.
     
     This module implements weight sharing for QKV projection across all blocks
-    within a ResidualGroup, reducing QKV parameters by ~75% with minimal 
-    performance loss (~0.06 dB on DIV2K).
+    within a ResidualGroup. It can be further decomposed using LowRankLinear.
     
     Args:
         dim (int): Input channel dimension
         bias (bool): Whether to use bias in linear projection. Default: True
+        rank_ratio (float): Ratio to determine the rank for LowRankLinear. 
+                            If 1.0, a standard nn.Linear is used. Default: 1.0
     """
-    def __init__(self, dim: int, bias: bool = True):
+    def __init__(self, dim: int, bias: bool = True, rank_ratio: float = 1.0):
         super().__init__()
-        self.weight = nn.Parameter(torch.empty(3 * dim, dim))
-        self.bias = nn.Parameter(torch.zeros(3 * dim)) if bias else None
-        trunc_normal_(self.weight, std=.02)
+        self.in_dim = dim
+        self.out_dim = 3 * dim
+        
+        if 0.0 < rank_ratio < 1.0:
+            rank = max(1, int(rank_ratio * min(self.in_dim, self.out_dim))) # min_rank is 1
+            self.qkv_proj = LowRankLinear(self.in_dim, self.out_dim, rank, bias=bias)
+            # print(f"SharedQKV using LowRankLinear with rank {rank} (dim={dim}, rank_ratio={rank_ratio})")
+        else:
+            self.qkv_proj = nn.Linear(self.in_dim, self.out_dim, bias=bias)
+            # print(f"SharedQKV using nn.Linear (dim={dim}, rank_ratio={rank_ratio})")
+        
+        if not (0.0 < rank_ratio < 1.0): # Initialize if it's a standard Linear or rank_ratio is outside (0,1)
+             if isinstance(self.qkv_proj, nn.Linear):
+                trunc_normal_(self.qkv_proj.weight, std=.02)
+                if bias and self.qkv_proj.bias is not None:
+                    nn.init.constant_(self.qkv_proj.bias, 0)
+        # For LowRankLinear, weights are initialized by its own nn.Linear layers or by conversion script.
+
 
     def forward(self, x):
         """Forward pass for shared QKV projection.
@@ -40,7 +80,7 @@ class SharedQKV(nn.Module):
         Returns:
             QKV tensor (B, N, 3*C)
         """
-        return F.linear(x, self.weight, self.bias)
+        return self.qkv_proj(x)
 
 
 def img2windows(img, H_sp, W_sp):
@@ -93,15 +133,35 @@ class SGFN(nn.Module):
         out_features (int | None): Number of output channels. Default: None
         act_layer (nn.Module): Activation layer. Default: nn.GELU
         drop (float): Dropout rate. Default: 0.0
+        rank_ratio (float): Ratio to determine the rank for LowRankLinear. 
+                            If 1.0, a standard nn.Linear is used. Default: 1.0
     """
-    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
+    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0., rank_ratio: float = 1.0):
         super().__init__()
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
-        self.fc1 = nn.Linear(in_features, hidden_features)
+
+        self.rank_ratio = rank_ratio
+
+        if 0.0 < rank_ratio < 1.0:
+            fc1_rank = max(1, int(rank_ratio * min(in_features, hidden_features)))
+            self.fc1 = LowRankLinear(in_features, hidden_features, fc1_rank, bias=True)
+            # print(f"SGFN.fc1 using LowRankLinear with rank {fc1_rank} (in={in_features}, out={hidden_features}, rank_ratio={rank_ratio})")
+        else:
+            self.fc1 = nn.Linear(in_features, hidden_features)
+            # print(f"SGFN.fc1 using nn.Linear (in={in_features}, out={hidden_features}, rank_ratio={rank_ratio})")
+        
         self.act = act_layer()
         self.sg = SpatialGate(hidden_features//2)
-        self.fc2 = nn.Linear(hidden_features//2, out_features)
+
+        if 0.0 < rank_ratio < 1.0:
+            fc2_rank = max(1, int(rank_ratio * min(hidden_features//2, out_features)))
+            self.fc2 = LowRankLinear(hidden_features//2, out_features, fc2_rank, bias=True)
+            # print(f"SGFN.fc2 using LowRankLinear with rank {fc2_rank} (in={hidden_features//2}, out={out_features}, rank_ratio={rank_ratio})")
+        else:
+            self.fc2 = nn.Linear(hidden_features//2, out_features)
+            # print(f"SGFN.fc2 using nn.Linear (in={hidden_features//2}, out={out_features}, rank_ratio={rank_ratio})")
+        
         self.drop = nn.Dropout(drop)
 
     def forward(self, x, H, W):
@@ -572,7 +632,7 @@ class Adaptive_Channel_Attention(nn.Module):
 
 class DATB(nn.Module):
     def __init__(self, dim, num_heads, reso=64, split_size=[2,4],shift_size=[1,2], expansion_factor=4., qkv_bias=False, qk_scale=None, drop=0.,
-                 attn_drop=0., drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, rg_idx=0, b_idx=0, shared_qkv=None):
+                 attn_drop=0., drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, rg_idx=0, b_idx=0, shared_qkv=None, rank_ratio: float = 1.0):
         super().__init__()
 
         self.norm1 = norm_layer(dim)
@@ -592,7 +652,7 @@ class DATB(nn.Module):
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
         ffn_hidden_dim = int(dim * expansion_factor)
-        self.ffn = SGFN(in_features=dim, hidden_features=ffn_hidden_dim, out_features=dim, act_layer=act_layer)
+        self.ffn = SGFN(in_features=dim, hidden_features=ffn_hidden_dim, out_features=dim, act_layer=act_layer, rank_ratio=rank_ratio)
         self.norm2 = norm_layer(dim)
 
     def forward(self, x, x_size):
@@ -642,14 +702,16 @@ class ResidualGroup(nn.Module):
                     depth=2,
                     use_chk=False,
                     resi_connection='1conv',
-                    rg_idx=0):
+                    rg_idx=0,
+                    rank_ratio: float = 1.0):
         super().__init__()
         self.use_chk = use_chk
         self.reso = reso
+        self.rank_ratio = rank_ratio
 
         # Create shared QKV weights for this ResidualGroup
         # This reduces QKV parameters by ~75% within each RG with minimal performance loss
-        self.shared_qkv = SharedQKV(dim, bias=qkv_bias)
+        self.shared_qkv = SharedQKV(dim, bias=qkv_bias, rank_ratio=self.rank_ratio)
 
         self.blocks = nn.ModuleList([
         DATB(
@@ -669,6 +731,7 @@ class ResidualGroup(nn.Module):
             rg_idx = rg_idx,
             b_idx = i,
             shared_qkv=self.shared_qkv,  # Pass shared QKV to all blocks in this RG
+            rank_ratio=self.rank_ratio,
             )for i in range(depth)])
 
         if resi_connection == '1conv':
@@ -786,6 +849,7 @@ class DAT(nn.Module):
                 img_range=1.,
                 resi_connection='1conv',
                 upsampler='pixelshuffle',
+                rank_ratio: float = 1.0,
                 **kwargs):
         super().__init__()
 
@@ -800,6 +864,7 @@ class DAT(nn.Module):
             self.mean = torch.zeros(1, 1, 1, 1)
         self.upscale = upscale
         self.upsampler = upsampler
+        self.rank_ratio = rank_ratio
 
         # ------------------------- 1, Shallow Feature Extraction ------------------------- #
         self.conv_first = nn.Conv2d(num_in_ch, embed_dim, 3, 1, 1)
@@ -840,7 +905,8 @@ class DAT(nn.Module):
                 depth=depth[i],
                 use_chk=use_chk,
                 resi_connection=resi_connection,
-                rg_idx=i)
+                rg_idx=i,
+                rank_ratio=self.rank_ratio)
             self.layers.append(layer)
 
         self.norm = norm_layer(curr_dim)
@@ -926,7 +992,8 @@ if __name__ == '__main__':
         expansion_factor=2,
         resi_connection='1conv',
         split_size=[8,16],
-                ).cuda().eval()
+        rank_ratio=0.5
+    ).cuda().eval()
 
     print(height, width)
 
