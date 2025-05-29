@@ -9,10 +9,10 @@ manual_seed: 10
 datasets:
   train:
     task: SR
-    name: DIV2K
+    name: DIV2K_TRAIN
     type: PairedImageDataset
-    dataroot_gt: /datasets/DIV2K/HR
-    dataroot_lq: /datasets/DIV2K/LR
+    dataroot_gt: ../datasets/DIV2K_s/train/HR
+    dataroot_lq: ../datasets/DIV2K_s/train/LR
     filename_tmpl: '{}x4'
     io_backend:
       type: disk
@@ -30,10 +30,10 @@ datasets:
 
   val:
     task: SR
-    name: Urban100
+    name: DIV2K_VAL
     type: PairedImageDataset
-    dataroot_gt: /datasets/Urban100/HR
-    dataroot_lq: /datasets/Urban100/LR
+    dataroot_gt: ../datasets/DIV2K_s/val/HR
+    dataroot_lq: ../datasets/DIV2K_s/val/LR
     filename_tmpl: '{}x4'
     io_backend:
       type: disk
@@ -47,16 +47,17 @@ network_g:
   img_size: 64
   img_range: 1.
   depth: [18]
-  embed_dim: 48
-  num_heads: [4]
+  embed_dim: 36
+  num_heads: [3]
   expansion_factor: 1.5
   resi_connection: '3conv'
-  split_size: [8,32]
+  split_size: [8,16]
   upsampler: 'pixelshuffledirect'
 
 # path
 path:
   pretrain_network_g: ~/Downloads/net_g_latest.pth
+  # pretrain_network_g: experiments/train_DAT_light_x4/models/net_g_latest.pth
   strict_load_g: False
   resume_state: ~
 
