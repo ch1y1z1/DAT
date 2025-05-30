@@ -10,6 +10,7 @@ from einops import rearrange
 
 import math
 import numpy as np
+from typing import Optional
 
 from basicsr.utils.registry import ARCH_REGISTRY
 
@@ -632,11 +633,17 @@ class Adaptive_Channel_Attention(nn.Module):
 
 class DATB(nn.Module):
     def __init__(self, dim, num_heads, reso=64, split_size=[2,4],shift_size=[1,2], expansion_factor=4., qkv_bias=False, qk_scale=None, drop=0.,
-                 attn_drop=0., drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, rg_idx=0, b_idx=0, shared_qkv=None, rank_ratio: float = 1.0):
+                 attn_drop=0., drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, 
+                 rg_idx=0, b_idx=0, shared_qkv=None, 
+                 base_rank_ratio: float = 1.0, 
+                 high_rank_ratio: Optional[float] = None, 
+                 high_rank_depth_threshold: int = 999):
         super().__init__()
 
         self.norm1 = norm_layer(dim)
 
+        # Adaptive_Spatial_Attention and Adaptive_Channel_Attention use shared_qkv.
+        # The rank for shared_qkv is determined in ResidualGroup.
         if b_idx % 2 == 0:
             # DSTB - Pass shared_qkv to spatial attention
             self.attn = Adaptive_Spatial_Attention(
@@ -652,15 +659,27 @@ class DATB(nn.Module):
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
         ffn_hidden_dim = int(dim * expansion_factor)
-        self.ffn = SGFN(in_features=dim, hidden_features=ffn_hidden_dim, out_features=dim, act_layer=act_layer, rank_ratio=rank_ratio)
+
+        # Determine rank_ratio for this DATB's SGFN
+        current_ffn_rank_ratio = base_rank_ratio
+        if high_rank_ratio is not None and b_idx < high_rank_depth_threshold:
+            current_ffn_rank_ratio = high_rank_ratio
+            print(f"RG {rg_idx}, Block {b_idx}: SGFN will use rank_ratio: {current_ffn_rank_ratio} (block index {b_idx} is shallower than depth threshold {high_rank_depth_threshold})")
+        else:
+            if high_rank_ratio is not None: # Only print if high_rank_ratio was an option
+                print(f"RG {rg_idx}, Block {b_idx}: SGFN (block index {b_idx} is NOT shallower than threshold {high_rank_depth_threshold} or high_rank_ratio not set) will use base_rank_ratio: {current_ffn_rank_ratio}")
+            else:
+                print(f"RG {rg_idx}, Block {b_idx}: SGFN will use base_rank_ratio: {current_ffn_rank_ratio} (high_rank_ratio not provided)")
+
+        self.ffn = SGFN(in_features=dim, hidden_features=ffn_hidden_dim, out_features=dim, act_layer=act_layer, rank_ratio=current_ffn_rank_ratio)
         self.norm2 = norm_layer(dim)
 
     def forward(self, x, x_size):
         """
         Input: x: (B, H*W, C), x_size: (H, W)
         Output: x: (B, H*W, C)
-        """        
-        H , W = x_size
+        """
+        H, W = x_size
         x = x + self.drop_path(self.attn(self.norm1(x), H, W))
         x = x + self.drop_path(self.ffn(self.norm2(x), H, W))
 
@@ -703,15 +722,27 @@ class ResidualGroup(nn.Module):
                     use_chk=False,
                     resi_connection='1conv',
                     rg_idx=0,
-                    rank_ratio: float = 1.0):
+                    base_rank_ratio: float = 1.0,
+                    high_rank_ratio: Optional[float] = None,
+                    high_rank_depth_threshold: int = 999):
         super().__init__()
         self.use_chk = use_chk
         self.reso = reso
-        self.rank_ratio = rank_ratio
+        self.base_rank_ratio = base_rank_ratio
+        self.high_rank_ratio = high_rank_ratio
+        self.high_rank_depth_threshold = high_rank_depth_threshold
+        self.rg_idx = rg_idx
 
-        # Create shared QKV weights for this ResidualGroup
-        # This reduces QKV parameters by ~75% within each RG with minimal performance loss
-        self.shared_qkv = SharedQKV(dim, bias=qkv_bias, rank_ratio=self.rank_ratio)
+        # Determine rank_ratio for this RG's SharedQKV
+        current_shared_qkv_rank_ratio = self.base_rank_ratio
+        if self.high_rank_ratio is not None:
+            # SharedQKV always considers high_rank_ratio if provided
+            current_shared_qkv_rank_ratio = self.high_rank_ratio 
+            print(f"RG {rg_idx}: SharedQKV will use rank_ratio: {current_shared_qkv_rank_ratio}")
+        else:
+            print(f"RG {rg_idx}: SharedQKV will use base_rank_ratio: {current_shared_qkv_rank_ratio}")
+
+        self.shared_qkv = SharedQKV(dim, bias=qkv_bias, rank_ratio=current_shared_qkv_rank_ratio)
 
         self.blocks = nn.ModuleList([
         DATB(
@@ -731,7 +762,9 @@ class ResidualGroup(nn.Module):
             rg_idx = rg_idx,
             b_idx = i,
             shared_qkv=self.shared_qkv,  # Pass shared QKV to all blocks in this RG
-            rank_ratio=self.rank_ratio,
+            base_rank_ratio=self.base_rank_ratio,
+            high_rank_ratio=self.high_rank_ratio,
+            high_rank_depth_threshold=self.high_rank_depth_threshold
             )for i in range(depth)])
 
         if resi_connection == '1conv':
@@ -849,9 +882,16 @@ class DAT(nn.Module):
                 img_range=1.,
                 resi_connection='1conv',
                 upsampler='pixelshuffle',
-                rank_ratio: float = 1.0,
+                rank_ratio: float = 1.0, # Base rank ratio
+                high_rank_ratio: Optional[float] = None, # Optional high rank ratio
+                high_rank_depth_threshold: int = 999, # Threshold for applying high_rank_ratio to FFNs
                 **kwargs):
         super().__init__()
+        
+        print(f"[DAT __init__] Received rank_ratio: {rank_ratio}")
+        print(f"[DAT __init__] Received high_rank_ratio: {high_rank_ratio}")
+        print(f"[DAT __init__] Received high_rank_depth_threshold: {high_rank_depth_threshold}")
+            
 
         num_in_ch = in_chans
         num_out_ch = in_chans
@@ -865,6 +905,8 @@ class DAT(nn.Module):
         self.upscale = upscale
         self.upsampler = upsampler
         self.rank_ratio = rank_ratio
+        self.high_rank_ratio = high_rank_ratio
+        self.high_rank_depth_threshold = high_rank_depth_threshold
 
         # ------------------------- 1, Shallow Feature Extraction ------------------------- #
         self.conv_first = nn.Conv2d(num_in_ch, embed_dim, 3, 1, 1)
@@ -906,7 +948,10 @@ class DAT(nn.Module):
                 use_chk=use_chk,
                 resi_connection=resi_connection,
                 rg_idx=i,
-                rank_ratio=self.rank_ratio)
+                base_rank_ratio=self.rank_ratio,
+                high_rank_ratio=self.high_rank_ratio,
+                high_rank_depth_threshold=self.high_rank_depth_threshold,
+            )
             self.layers.append(layer)
 
         self.norm = norm_layer(curr_dim)
