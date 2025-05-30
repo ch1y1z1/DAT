@@ -51,16 +51,16 @@ network_g:
   num_heads: [4]
   expansion_factor: 1.5
   resi_connection: '3conv'
-  split_size: [8,32]
+  split_size: [8,16]
   upsampler: 'pixelshuffledirect'
-  # rank_ratio: 0.25
-  # high_rank_ratio: 0.3
-  # high_rank_depth_threshold: 2
+  rank_ratio: 0.25
+  high_rank_ratio: 0.3
+  high_rank_depth_threshold: 2
 
 # path
 path:
   pretrain_network_g: ./net_g.pth
-  # pretrain_network_g: ~/Downloads/net_g_latest.pth
+  # pretrain_network_g: ~/Downloads/net_g_120000.pth
   # pretrain_network_g: experiments/train_DAT_light_x4/models/net_g_latest.pth
   strict_load_g: False
   resume_state: ~
