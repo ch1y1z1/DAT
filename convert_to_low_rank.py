@@ -257,83 +257,11 @@ def main():
 
     low_rank_model = DAT(**dat_constructor_args)
 
-    # Verification of QKV sharing
-    print("---- Verifying QKV sharing ----")
-    if hasattr(low_rank_model, "layers") and len(low_rank_model.layers) > 0:
-        first_rg = low_rank_model.layers[0]
-        if hasattr(first_rg, "shared_qkv") and hasattr(first_rg.shared_qkv, "qkv_proj"):
-            rg_qkv_module_id = id(first_rg.shared_qkv)
-            rg_qkv_proj_id = id(first_rg.shared_qkv.qkv_proj)
-            print(f"RG 0 SharedQKV module object ID: {rg_qkv_module_id}")
-            print(
-                f"RG 0 shared_qkv.qkv_proj (Linear/LowRankLinear) object ID: {rg_qkv_proj_id}"
-            )
-            print(
-                f"RG 0 shared_qkv.qkv_proj type: {type(first_rg.shared_qkv.qkv_proj)}"
-            )
-
-            if hasattr(first_rg, "blocks") and len(first_rg.blocks) > 1:
-                block0_attn_qkv_object = first_rg.blocks[
-                    0
-                ].attn.qkv  # This is what's assigned in Adaptive_Spatial_Attention
-                block0_attn_qkv_id = id(block0_attn_qkv_object)
-                block1_attn_qkv_object = first_rg.blocks[1].attn.qkv
-                block1_attn_qkv_id = id(block1_attn_qkv_object)
-                print(f"RG 0 Block 0 attn.qkv object ID: {block0_attn_qkv_id}")
-                print(
-                    f"RG 0 Block 0 attn.qkv object type: {type(block0_attn_qkv_object)}"
-                )
-                print(f"RG 0 Block 1 attn.qkv object ID: {block1_attn_qkv_id}")
-
-                if rg_qkv_module_id == block0_attn_qkv_id:
-                    print("  ==> Block 0 attn.qkv IS THE SharedQKV MODULE from RG.")
-                elif rg_qkv_proj_id == block0_attn_qkv_id:
-                    print(
-                        "  ==> Block 0 attn.qkv IS THE QKV_PROJ SUBLAYER (Linear/LowRankLinear) from RG's SharedQKV."
-                    )
-                else:
-                    print(
-                        "  ==> Block 0 attn.qkv IS NEITHER the SharedQKV module NOR its qkv_proj sublayer from RG. It's a different object."
-                    )
-
-                if block0_attn_qkv_id == block1_attn_qkv_id:
-                    print(
-                        "  ==> Block 0 and Block 1 attn.qkv point to the SAME object."
-                    )
-                else:
-                    print(
-                        "  ==> Block 0 and Block 1 attn.qkv point to DIFFERENT objects."
-                    )
-        else:
-            print("Could not access first_rg.shared_qkv.qkv_proj for detailed check.")
-    else:
-        print("Could not access low_rank_model.layers[0] for QKV sharing check.")
-
+    # Verification of QKV sharing - REMOVED FOR SIMPLICITY
+    # print("---- Verifying QKV sharing ----")
+    # ... (entire verification block removed) ...
+    # print("---- End Verification ----")
     new_model_state_dict_template = low_rank_model.state_dict()
-
-    print("---- Relevant keys in new_model_state_dict_template ----")
-    relevant_keys_found = False
-    for k in new_model_state_dict_template.keys():
-        if (
-            "layers.0.shared_qkv.qkv_proj" in k
-        ):  # Parameters of the RG-level SharedQKV's projection layer
-            print(f"  RG QKV Path: {k}")
-            relevant_keys_found = True
-        if (
-            "layers.0.blocks.0.attn.qkv.qkv_proj" in k
-        ):  # Parameters of Block 0's QKV's projection layer
-            print(f"  Block 0 QKV Path: {k}")
-            relevant_keys_found = True
-        if (
-            "layers.0.blocks.1.attn.qkv.qkv_proj" in k
-        ):  # Parameters of Block 1's QKV's projection layer
-            print(f"  Block 1 QKV Path: {k}")
-            relevant_keys_found = True
-    if not relevant_keys_found:
-        print(
-            "  No relevant QKV keys found with the specified paths in the new model's state_dict."
-        )
-    print("---- End Verification ----")
 
     print(f"Loading original model state_dict from {args.original_model_path}...")
     try:
@@ -367,7 +295,9 @@ def main():
     tested_one_ffn_fc1_flag = False  # For SGFN.fc1
     tested_one_ffn_fc2_flag = False  # For SGFN.fc2
 
-    print("Processing and Caching Residual Group shared QKV weights first...")
+    print(
+        "Processing and Caching Residual Group shared QKV weights first..."
+    )  # Keep high-level
     # Determine effective rank_ratio for model construction vs SVD
     # Model construction uses dat_constructor_args['rank_ratio'] (which is affected by CLI)
     # SVD decomposition itself should use args.rank_ratio from CLI for consistency in this script's context
@@ -398,9 +328,9 @@ def main():
             if (
                 new_model_rg_qkv_proj_is_low_rank
             ):  # New model has LowRankLinear for this RG's SharedQKV
-                print(
-                    f"  Decomposing RG {rg_base_name} shared QKV: {original_rg_shared_qkv_weight_key} for LowRankLinear."
-                )
+                # print( # REMOVED
+                #     f"  Decomposing RG {rg_base_name} shared QKV: {original_rg_shared_qkv_weight_key} for LowRankLinear."
+                # )
                 u_w, v_w, v_b = convert_linear_to_low_rank(
                     orig_w, orig_b, svd_rank_ratio_to_use
                 )
@@ -424,14 +354,10 @@ def main():
                 if (
                     not tested_one_svd_layer_flag
                 ):  # Perform SVD test for the first decomposed RG QKV
-                    print(
-                        f"\n[DEBUG] Testing single layer SVD reconstruction for SharedQKV: {original_rg_shared_qkv_weight_key}"
-                    )
-                    # orig_w, orig_b are available from the current RG shared QKV
-                    # u_w, v_w, v_b are from convert_linear_to_low_rank with svd_rank_ratio_to_use (e.g. 0.7 for the model)
-
-                    # For this test only, decompose orig_w to full rank with the same SVD method
-                    # Ensure to use .clone() for weights and biases passed to convert_linear_to_low_rank if they might be modified
+                    # Simplified test: only print WARNING if model's rank error is high
+                    # print( # REMOVED
+                    #     f"\\n[DEBUG] Testing single layer SVD reconstruction for SharedQKV: {original_rg_shared_qkv_weight_key}"
+                    # )
                     u_w_test_full_qkv, v_w_test_full_qkv, v_b_test_full_qkv = (
                         convert_linear_to_low_rank(
                             orig_w.clone(),
@@ -500,46 +426,29 @@ def main():
                             test_input_qkv
                         )
 
-                    print(f"  Input shape for SharedQKV test: {test_input_qkv.shape}")
-                    print(
-                        "  --- Comparing Original vs. Model's Rank Approx (SharedQKV, rank_ratio={}) ---".format(
-                            svd_rank_ratio_to_use
-                        )
-                    )
+                    # Simplified print logic below
+                    # print(f"  Input shape for SharedQKV test: {test_input_qkv.shape}") # REMOVED
+                    # print( # REMOVED
+                    #     "  --- Comparing Original vs. Model's Rank Approx (SharedQKV, rank_ratio={}) ---".format(
+                    #         svd_rank_ratio_to_use
+                    #     )
+                    # )
                     abs_diff_model_qkv = (y_orig_qkv - y_model_approx_qkv).abs()
-                    print(
-                        f"    Rank used for model's LowRankLinear: {rank_val_model_qkv}"
-                    )
-                    print(
-                        f"    Mean Absolute Difference (model vs orig): {abs_diff_model_qkv.mean().item():.6e}"
-                    )
-                    print(
-                        f"    Mean Relative Difference (model vs orig): {(abs_diff_model_qkv / (torch.abs(y_orig_qkv) + 1e-9)).mean().item():.6e}"
-                    )
-                    print(
-                        f"    Norm original: {torch.norm(y_orig_qkv).item():.4f}, Norm model approx: {torch.norm(y_model_approx_qkv).item():.4f}"
-                    )
+                    # print(f"    Rank used for model's LowRankLinear: {rank_val_model_qkv}") # REMOVED
+                    # print(f"    Mean Absolute Difference (model vs orig): {abs_diff_model_qkv.mean().item():.6e}") # REMOVED
+                    # print(f"    Mean Relative Difference (model vs orig): {(abs_diff_model_qkv / (torch.abs(y_orig_qkv) + 1e-9)).mean().item():.6e}") # REMOVED
+                    # print(f"    Norm original: {torch.norm(y_orig_qkv).item():.4f}, Norm model approx: {torch.norm(y_model_approx_qkv).item():.4f}") # REMOVED
 
-                    print(
-                        "  --- Comparing Original vs. Full Rank SVD Approx (SharedQKV, rank_ratio=1.0 for test) ---"
-                    )
+                    # print( # REMOVED
+                    #     "  --- Comparing Original vs. Full Rank SVD Approx (SharedQKV, rank_ratio=1.0 for test) ---"
+                    # )
                     abs_diff_full_qkv = (y_orig_qkv - y_full_rank_approx_qkv).abs()
-                    print(
-                        f"    Rank used for full rank test's LowRankLinear: {rank_val_full_qkv}"
-                    )
-                    print(
-                        f"    Mean Absolute Difference (full rank test vs orig): {abs_diff_full_qkv.mean().item():.6e}"
-                    )
-                    print(
-                        f"    Mean Relative Difference (full rank test vs orig): {(abs_diff_full_qkv / (torch.abs(y_orig_qkv) + 1e-9)).mean().item():.6e}"
-                    )
-                    print(
-                        f"    Norm original: {torch.norm(y_orig_qkv).item():.4f}, Norm full rank SVD approx: {torch.norm(y_full_rank_approx_qkv).item():.4f}"
-                    )
+                    # print(f"    Rank used for full rank test's LowRankLinear: {rank_val_full_qkv}") # REMOVED
+                    # print(f"    Mean Absolute Difference (full rank test vs orig): {abs_diff_full_qkv.mean().item():.6e}") # REMOVED
+                    # print(f"    Mean Relative Difference (full rank test vs orig): {(abs_diff_full_qkv / (torch.abs(y_orig_qkv) + 1e-9)).mean().item():.6e}") # REMOVED
+                    # print(f"    Norm original: {torch.norm(y_orig_qkv).item():.4f}, Norm full rank SVD approx: {torch.norm(y_full_rank_approx_qkv).item():.4f}") # REMOVED
 
-                    # Adjusted thresholds for clarity
-                    # For full rank, expect very small error, close to floating point precision
-                    if (
+                    if (  # Check full rank SVD integrity
                         abs_diff_full_qkv.mean().item() > 1e-5
                         or (
                             abs(
@@ -551,15 +460,14 @@ def main():
                         > 1e-4
                     ):
                         print(
-                            f"    [DEBUG] WARNING: Potentially high error for SharedQKV FULL RANK SVD reconstruction!"
+                            f"  WARNING: High error in FULL RANK SVD reconstruction for SharedQKV: {original_rg_shared_qkv_weight_key}. This might indicate an SVD logic issue."
                         )
-                    else:
-                        print(
-                            f"    [DEBUG] SharedQKV Full rank SVD reconstruction through LowRankLinear seems OK."
-                        )
+                    # else: # REMOVED "seems OK" print
+                    # print(
+                    #     f"    [DEBUG] SharedQKV Full rank SVD reconstruction through LowRankLinear seems OK."
+                    # )
 
-                    # For model's rank, use the previous thresholds
-                    if (
+                    if (  # Check model's rank SVD error
                         abs_diff_model_qkv.mean().item() > 5e-3
                         or (
                             abs(torch.norm(y_orig_qkv) - torch.norm(y_model_approx_qkv))
@@ -568,19 +476,18 @@ def main():
                         > 0.05
                     ):
                         print(
-                            f"    [DEBUG] WARNING: High reconstruction error for SharedQKV MODEL'S RANK ({svd_rank_ratio_to_use}) SVD on {original_rg_shared_qkv_weight_key}!"
+                            f"  WARNING: High reconstruction error for SharedQKV (rank_ratio={svd_rank_ratio_to_use}) on {original_rg_shared_qkv_weight_key}. MAE: {abs_diff_model_qkv.mean().item():.2e}"
                         )
-                    else:
-                        print(
-                            f"    [DEBUG] SharedQKV Model's rank ({svd_rank_ratio_to_use}) SVD reconstruction seems OK for {original_rg_shared_qkv_weight_key}."
-                        )
-
-                    print("[DEBUG] End of extended single SharedQKV SVD layer test.\n")
-                    tested_one_svd_layer_flag = True  # Mark SharedQKV as tested
+                    # else: # REMOVED "seems OK" print
+                    # print(
+                    #     f"    [DEBUG] SharedQKV Model's rank ({svd_rank_ratio_to_use}) SVD reconstruction seems OK for {original_rg_shared_qkv_weight_key}."
+                    # )
+                    # print("[DEBUG] End of extended single SharedQKV SVD layer test.\\n") # REMOVED
+                    tested_one_svd_layer_flag = True
             else:  # New model has standard nn.Linear for this RG's SharedQKV
-                print(
-                    f"  Caching original RG {rg_base_name} shared QKV: {original_rg_shared_qkv_weight_key} for nn.Linear."
-                )
+                # print( # REMOVED
+                #     f"  Caching original RG {rg_base_name} shared QKV: {original_rg_shared_qkv_weight_key} for nn.Linear."
+                # )
                 shared_rg_weights_cache[rg_base_name] = (
                     orig_w.clone(),
                     orig_b.clone() if orig_b is not None else None,
@@ -630,11 +537,12 @@ def main():
                     elif ".V.bias" in new_key and v_b_cached is not None:
                         converted_state_dict[new_key] = v_b_cached.clone()
                     elif v_b_cached is None and ".V.bias" in new_key:
+                        # Keep this info print as it might be useful if bias is unexpectedly missing
                         print(
                             f"    Info: Block QKV {new_key} expects bias, but cached RG QKV bias was None. Using template init."
                         )
                         converted_state_dict[new_key] = template_param.clone()
-                    else:
+                    else:  # Keep this warning
                         print(
                             f"  Warning: Unhandled decomposed block QKV key: {new_key}. Using template param."
                         )
@@ -648,11 +556,12 @@ def main():
                     elif new_key.endswith(".bias") and orig_b_cached is not None:
                         converted_state_dict[new_key] = orig_b_cached.clone()
                     elif orig_b_cached is None and new_key.endswith(".bias"):
+                        # Keep this info print
                         print(
                             f"    Info: Block QKV {new_key} expects bias, but cached RG QKV bias was None. Using template init."
                         )
                         converted_state_dict[new_key] = template_param.clone()
-                    else:
+                    else:  # Keep this warning
                         print(
                             f"  Warning: Unhandled non-decomposed block QKV key: {new_key}. Using template param."
                         )
@@ -727,9 +636,10 @@ def main():
                 ffn_type_str = "SGFN.fc1" if is_fc1 else "SGFN.fc2"
 
                 if not current_ffn_tested_flag:
-                    print(
-                        f"\n[DEBUG] Testing single layer SVD reconstruction for {ffn_type_str}: {original_ffn_w_key}"
-                    )
+                    # Simplified test: only print WARNING if model's rank error is high
+                    # print( # REMOVED
+                    #     f"\\n[DEBUG] Testing single layer SVD reconstruction for {ffn_type_str}: {original_ffn_w_key}"
+                    # )
                     u_w_test_full_ffn, v_w_test_full_ffn, v_b_test_full_ffn = (
                         convert_linear_to_low_rank(
                             orig_w_ffn.clone(),
@@ -763,11 +673,13 @@ def main():
                     ):
                         reconstructed_lr_layer_model_ffn.V.bias.data = v_b_ffn.clone()
 
-                    rank_val_full_ffn = u_w_test_full_ffn.shape[0]
+                    test_input_ffn = torch.randn(1, 2, in_f_orig_ffn).float()
+                    original_linear_layer_ffn.eval()
+                    reconstructed_lr_layer_model_ffn.eval()
                     reconstructed_lr_layer_full_rank_ffn = LowRankLinear(
                         in_features=in_f_orig_ffn,
                         out_features=out_f_orig_ffn,
-                        rank=rank_val_full_ffn,
+                        rank=rank_val_model_ffn,
                         bias=(v_b_test_full_ffn is not None),
                     )
                     reconstructed_lr_layer_full_rank_ffn.U.weight.data = (
@@ -784,11 +696,6 @@ def main():
                             v_b_test_full_ffn.clone()
                         )
 
-                    test_input_ffn = torch.randn(1, 2, in_f_orig_ffn).float()
-                    original_linear_layer_ffn.eval()
-                    reconstructed_lr_layer_model_ffn.eval()
-                    reconstructed_lr_layer_full_rank_ffn.eval()
-
                     with torch.no_grad():
                         y_orig_ffn = original_linear_layer_ffn(test_input_ffn)
                         y_model_approx_ffn = reconstructed_lr_layer_model_ffn(
@@ -798,48 +705,30 @@ def main():
                             test_input_ffn
                         )
 
-                    print(
-                        f"  Input shape for {ffn_type_str} test: {test_input_ffn.shape}"
-                    )
-                    print(
-                        "  --- Comparing Original vs. Model's Rank Approx ({}, rank_ratio={}) ---".format(
-                            ffn_type_str, svd_rank_ratio_to_use
-                        )
-                    )
+                    # print(f"  Input shape for {ffn_type_str} test: {test_input_ffn.shape}") # REMOVED
+                    # print( # REMOVED
+                    #     "  --- Comparing Original vs. Model's Rank Approx ({}, rank_ratio={}) ---".format(
+                    #         ffn_type_str, svd_rank_ratio_to_use
+                    #     )
+                    # )
                     abs_diff_model_ffn = (y_orig_ffn - y_model_approx_ffn).abs()
-                    print(
-                        f"    Rank used for model's LowRankLinear: {rank_val_model_ffn}"
-                    )
-                    print(
-                        f"    Mean Absolute Difference (model vs orig): {abs_diff_model_ffn.mean().item():.6e}"
-                    )
-                    print(
-                        f"    Mean Relative Difference (model vs orig): {(abs_diff_model_ffn / (torch.abs(y_orig_ffn) + 1e-9)).mean().item():.6e}"
-                    )
-                    print(
-                        f"    Norm original: {torch.norm(y_orig_ffn).item():.4f}, Norm model approx: {torch.norm(y_model_approx_ffn).item():.4f}"
-                    )
+                    # print(f"    Rank used for model's LowRankLinear: {rank_val_model_ffn}") # REMOVED
+                    # print(f"    Mean Absolute Difference (model vs orig): {abs_diff_model_ffn.mean().item():.6e}") # REMOVED
+                    # print(f"    Mean Relative Difference (model vs orig): {(abs_diff_model_ffn / (torch.abs(y_orig_ffn) + 1e-9)).mean().item():.6e}") # REMOVED
+                    # print(f"    Norm original: {torch.norm(y_orig_ffn).item():.4f}, Norm model approx: {torch.norm(y_model_approx_ffn).item():.4f}") # REMOVED
 
-                    print(
-                        "  --- Comparing Original vs. Full Rank SVD Approx ({}, rank_ratio=1.0 for test) ---".format(
-                            ffn_type_str
-                        )
-                    )
+                    # print( # REMOVED
+                    #     "  --- Comparing Original vs. Full Rank SVD Approx ({}, rank_ratio=1.0 for test) ---".format(
+                    #         ffn_type_str
+                    #     )
+                    # )
                     abs_diff_full_ffn = (y_orig_ffn - y_full_rank_approx_ffn).abs()
-                    print(
-                        f"    Rank used for full rank test's LowRankLinear: {rank_val_full_ffn}"
-                    )
-                    print(
-                        f"    Mean Absolute Difference (full rank test vs orig): {abs_diff_full_ffn.mean().item():.6e}"
-                    )
-                    print(
-                        f"    Mean Relative Difference (full rank test vs orig): {(abs_diff_full_ffn / (torch.abs(y_orig_ffn) + 1e-9)).mean().item():.6e}"
-                    )
-                    print(
-                        f"    Norm original: {torch.norm(y_orig_ffn).item():.4f}, Norm full rank SVD approx: {torch.norm(y_full_rank_approx_ffn).item():.4f}"
-                    )
+                    # print(f"    Rank used for full rank test's LowRankLinear: {rank_val_full_ffn}") # REMOVED
+                    # print(f"    Mean Absolute Difference (full rank test vs orig): {abs_diff_full_ffn.mean().item():.6e}") # REMOVED
+                    # print(f"    Mean Relative Difference (full rank test vs orig): {(abs_diff_full_ffn / (torch.abs(y_orig_ffn) + 1e-9)).mean().item():.6e}") # REMOVED
+                    # print(f"    Norm original: {torch.norm(y_orig_ffn).item():.4f}, Norm full rank SVD approx: {torch.norm(y_full_rank_approx_ffn).item():.4f}") # REMOVED
 
-                    if (
+                    if (  # Check full rank SVD integrity
                         abs_diff_full_ffn.mean().item() > 1e-5
                         or (
                             abs(
@@ -851,14 +740,14 @@ def main():
                         > 1e-4
                     ):
                         print(
-                            f"    [DEBUG] WARNING: Potentially high error for {ffn_type_str} FULL RANK SVD reconstruction!"
+                            f"  WARNING: High error in FULL RANK SVD reconstruction for {ffn_type_str}: {original_ffn_w_key}. This might indicate an SVD logic issue."
                         )
-                    else:
-                        print(
-                            f"    [DEBUG] {ffn_type_str} Full rank SVD reconstruction through LowRankLinear seems OK."
-                        )
+                    # else: # REMOVED "seems OK" print
+                    # print(
+                    #     f"    [DEBUG] {ffn_type_str} Full rank SVD reconstruction through LowRankLinear seems OK."
+                    # )
 
-                    if (
+                    if (  # Check model's rank SVD error
                         abs_diff_model_ffn.mean().item() > 5e-3
                         or (
                             abs(torch.norm(y_orig_ffn) - torch.norm(y_model_approx_ffn))
@@ -867,22 +756,20 @@ def main():
                         > 0.05
                     ):
                         print(
-                            f"    [DEBUG] WARNING: High reconstruction error for {ffn_type_str} MODEL'S RANK ({svd_rank_ratio_to_use}) SVD on {original_ffn_w_key}!"
+                            f"  WARNING: High reconstruction error for {ffn_type_str} (rank_ratio={svd_rank_ratio_to_use}) on {original_ffn_w_key}. MAE: {abs_diff_model_ffn.mean().item():.2e}"
                         )
-                    else:
-                        print(
-                            f"    [DEBUG] {ffn_type_str} Model's rank ({svd_rank_ratio_to_use}) SVD reconstruction seems OK for {original_ffn_w_key}."
-                        )
-                    print(
-                        f"[DEBUG] End of extended single {ffn_type_str} SVD layer test.\n"
-                    )
+                    # else: # REMOVED "seems OK" print
+                    # print(
+                    #     f"    [DEBUG] {ffn_type_str} Model's rank ({svd_rank_ratio_to_use}) SVD reconstruction seems OK for {original_ffn_w_key}."
+                    # )
+                    # print(f"[DEBUG] End of extended single {ffn_type_str} SVD layer test.\\n") # REMOVED
 
                     if is_fc1:
                         tested_one_ffn_fc1_flag = True
                     else:
                         tested_one_ffn_fc2_flag = True
 
-            elif original_ffn_w_key:
+            elif original_ffn_w_key:  # Keep this warning
                 print(
                     f"  Warning: Original weight {original_ffn_w_key} not found for FFN SVD. Using template for {new_key} and its V-parts."
                 )
@@ -931,13 +818,16 @@ def main():
             if (
                 new_key not in converted_state_dict
             ):  # Check if not already processed (e.g. by RG cache pass or FFN V-parts)
+                # Keep this warning
                 print(
                     f"  Warning: Parameter {original_key_to_find} (mapped from {new_key}) not found in original. Using template param."
                 )
                 converted_state_dict[new_key] = template_param.clone()
 
     low_rank_model.load_state_dict(converted_state_dict, strict=False)
-    print("Attempted to load converted state_dict into the new low-rank model.")
+    print(
+        "Attempted to load converted state_dict into the new low-rank model."
+    )  # Keep high-level
 
     save_content = {}
     if "params_ema" in ckpt or "params" in ckpt:
@@ -952,7 +842,9 @@ def main():
         save_content = low_rank_model.state_dict()
 
     torch.save(save_content, args.converted_model_path)
-    print(f"Successfully converted model saved to {args.converted_model_path}")
+    print(
+        f"Successfully converted model saved to {args.converted_model_path}"
+    )  # Keep high-level
 
 
 if __name__ == "__main__":
