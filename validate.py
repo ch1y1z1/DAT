@@ -9,7 +9,7 @@ def evaluate(root_path):
     opt, _ = parse_options(root_path, is_train=False)
     model = build_model(opt)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    input_fake = torch.rand(1, 3, 256, 256).to(device)
+    input_fake = torch.rand(1, 3, 128, 128).to(device)
     
     # 使用 model.net_g 而不是 model，因为 net_g 是实际的 PyTorch 网络模型
     network = model.net_g
