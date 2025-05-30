@@ -287,20 +287,37 @@ def main():
         "img_range": args.img_range,
         "resi_connection": args.resi_connection,
         "upsampler": args.upsampler,
-        "rank_ratio": args.rank_ratio,  # This is for the new model, not from YAML
+        "rank_ratio": args.rank_ratio, 
+        "high_rank_ratio": args.high_rank_ratio,
+        "high_rank_depth_threshold": args.high_rank_depth_threshold
     }
 
-    # Override with YAML values if the corresponding CLI arg was not explicitly set (i.e., it's the default)
+    # Override with YAML values ONLY IF the corresponding CLI arg was NOT explicitly set (i.e., it's the default)
+    # For rank_ratio, high_rank_ratio, high_rank_depth_threshold, CLI args always take precedence if provided.
     if dat_params_from_yaml:
         for key, yaml_val in dat_params_from_yaml.items():
-            if hasattr(args, key):
-                if getattr(args, key) == parser.get_default(key):
-                    dat_constructor_args[key] = yaml_val
-
-    print("Initializing new low-rank DAT model with effective parameters:")
+            if key in dat_constructor_args and hasattr(args, key): # Ensure key is relevant and in args
+                # For most params, YAML overrides if CLI was default
+                if key not in ['rank_ratio', 'high_rank_ratio', 'high_rank_depth_threshold']:
+                    if getattr(args, key) == parser.get_default(key):
+                        dat_constructor_args[key] = yaml_val
+                # For these specific rank params, CLI already set them.
+                # If we wanted YAML to override CLI if CLI was default, we'd need specific logic,
+                # but current approach is CLI always wins for these if they are set via CLI.
+                # If CLI for high_rank_ratio was None (its default) and YAML has it, then YAML should be used.
+                elif key == 'high_rank_ratio':
+                    if args.high_rank_ratio is None and 'high_rank_ratio' in dat_params_from_yaml:
+                         dat_constructor_args['high_rank_ratio'] = dat_params_from_yaml['high_rank_ratio']
+                elif key == 'high_rank_depth_threshold':
+                     # If CLI was default (999) and YAML has a different one.
+                    if args.high_rank_depth_threshold == parser.get_default('high_rank_depth_threshold') and \
+                       'high_rank_depth_threshold' in dat_params_from_yaml:
+                       dat_constructor_args['high_rank_depth_threshold'] = dat_params_from_yaml['high_rank_depth_threshold']
+    
+    print("Initializing new low-rank DAT model with effective parameters for DAT constructor:")
     for k, v in dat_constructor_args.items():
-        if k != "rank_ratio":
-            print(f"  {k}: {v}")
+        print(f"  {k}: {v}")
+
 
     low_rank_model = DAT(**dat_constructor_args)
 
@@ -370,13 +387,15 @@ def main():
             current_sqkv_proj_module = get_module_by_path(low_rank_model, module_path_sqkv_proj)
 
             # Determine which rank_ratio to use for STRUCTURE and SVD of this SharedQKV
-            structural_rank_ratio_for_sqkv = dat_constructor_args['rank_ratio'] # Default structure from main/yaml rank_ratio
-            svd_rank_ratio_for_sqkv = structural_rank_ratio_for_sqkv # SVD ratio matches the structural one
-
+            structural_rank_ratio_for_sqkv = args.rank_ratio # Default structure from CLI base rank_ratio
+            
             if args.high_rank_ratio is not None:
-                print(f"  SharedQKV {original_rg_shared_qkv_weight_key} considers high_rank_ratio: {args.high_rank_ratio}.")
+                print(f"  SharedQKV {original_rg_shared_qkv_weight_key} considers high_rank_ratio: {args.high_rank_ratio} for structure & SVD.")
                 structural_rank_ratio_for_sqkv = args.high_rank_ratio
-            # else: SharedQKV uses base rank_ratio for structure and SVD
+            # else: SharedQKV uses base args.rank_ratio for structure and SVD (already set)
+            
+            # CRITICAL FIX: svd_rank_ratio_for_sqkv must be consistent with structural_rank_ratio_for_sqkv
+            svd_rank_ratio_for_sqkv = structural_rank_ratio_for_sqkv 
                 
             target_rank_sqkv = calculate_rank_for_svd(structural_rank_ratio_for_sqkv, in_features_sqkv, out_features_sqkv)
             
@@ -582,10 +601,14 @@ def main():
             # Populate converted_state_dict for this FFN module
             if isinstance(current_ffn_module_in_model, LowRankLinear):
                 if not (svd_rank_ratio_for_ffn < 1.0):
-                    print(f"  ERROR: FFN {ffn_module_base_path_identified} is LowRankLinear but SVD ratio is {svd_rank_ratio_for_ffn}. Should be < 1.0. Using 0.99 as fallback for SVD.")
+                    print(f"  ERROR: FFN {ffn_module_base_path_identified} is LowRankLinear but SVD ratio is {svd_rank_ratio_for_ffn}. Should be < 1.0. Forcing to 0.99 for SVD.")
                     svd_rank_ratio_for_ffn = 0.99 # Fallback to ensure SVD runs
                 
-                print(f"  Decomposing FFN {original_ffn_w_key} with SVD rank_ratio: {svd_rank_ratio_for_ffn}")
+                # Ensure the target_rank_ffn for SVD matches what the structure expects
+                # This was re-calculated for svd_rank_ratio_for_ffn, but let's ensure the print is clear
+                # The rank of current_ffn_module_in_model is the structural rank.
+                # The SVD should use svd_rank_ratio_for_ffn to decompose.
+                print(f"  Decomposing FFN {original_ffn_w_key} with SVD rank_ratio: {svd_rank_ratio_for_ffn} (structural rank was {current_ffn_module_in_model.rank})")
                 u_w_ffn, v_w_ffn, v_b_ffn = convert_linear_to_low_rank(orig_w_ffn, orig_b_ffn, svd_rank_ratio_for_ffn)
                 
                 converted_state_dict[f"{ffn_module_base_path_identified}.U.weight"] = u_w_ffn
