@@ -46,13 +46,16 @@ network_g:
   in_chans: 3
   img_size: 64
   img_range: 1.
-  depth: [18]
-  embed_dim: 36
-  num_heads: [3]
+  depth: [12]
+  embed_dim: 48
+  num_heads: [4]
   expansion_factor: 1.5
   resi_connection: '3conv'
   split_size: [8,16]
   upsampler: 'pixelshuffledirect'
+  # rank_ratio: 0.25
+  # high_rank_ratio: 0.3
+  # high_rank_depth_threshold: 2
 
 # path
 path:
